@@ -1,5 +1,7 @@
 # auto-worker
 
+[中文说明](README.zh-CN.md)
+
 A Claude Code skill for turning long-running local work into safe, resumable, scheduled AI worker loops.
 
 > Stop trying to keep one huge Claude session alive. Let many small Claude workers pick up state, do one task, verify, hand off, and exit.
