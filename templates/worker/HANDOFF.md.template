@@ -1,0 +1,25 @@
+# {{WORKER_TITLE}} Handoff
+
+## 本轮完成
+
+worker 尚未运行。本文件初始化为交接模板。
+
+## 本轮涉及文件
+
+- none
+
+## 验证命令
+
+- not_run: worker 尚未运行
+
+## 验证结果
+
+尚未验证。
+
+## 遇到的问题
+
+无。
+
+## 下一轮建议
+
+先运行验证命令：`{{VALIDATION_COMMAND}}`，确认 worker scaffold 可用。

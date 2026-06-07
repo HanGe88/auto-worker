@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="{{BASH_ROOT}}"
+WORKER_DIR="$ROOT/.claude/auto-worker/{{WORKER_NAME}}"
+LOCK_FILE="$WORKER_DIR/lock"
+PROMPT_FILE="$WORKER_DIR/worker-prompt.md"
+LOG_DIR="$WORKER_DIR/logs"
+RUNS_FILE="$WORKER_DIR/RUNS.jsonl"
+MAX_SECONDS=$(({{MAX_MINUTES}} * 60))
+
+mkdir -p "$LOG_DIR"
+
+TS="$(date +%Y%m%d-%H%M%S)"
+RUN_ID="$TS-$$"
+LOG_FILE="$LOG_DIR/$TS.log"
+STATUS="failed"
+EXIT_CODE=1
+NEXT="worker wrapper failed before claude completed"
+LOCK_ACQUIRED=0
+RUN_RECORD_WRITTEN=0
+HOST_NAME="$(hostname 2>/dev/null || printf 'unknown')"
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+append_run_record() {
+  local status="$1"
+  local exit_code="$2"
+  local next="$3"
+  printf '{"runId":"%s","status":"%s","task":"{{WORKER_NAME}}-wrapper","changedFiles":[],"verification":{"log":"%s","exitCode":%s},"next":"%s"}\n' \
+    "$(json_escape "$RUN_ID")" \
+    "$(json_escape "$status")" \
+    "$(json_escape "$LOG_FILE")" \
+    "$exit_code" \
+    "$(json_escape "$next")" >> "$RUNS_FILE"
+  RUN_RECORD_WRITTEN=1
+}
+
+cleanup() {
+  if [ "$LOCK_ACQUIRED" -eq 1 ]; then
+    local current_run_id current_pid
+    current_run_id="$(sed -n 's/.*"runId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$LOCK_FILE" 2>/dev/null || true)"
+    current_pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$LOCK_FILE" 2>/dev/null || true)"
+    if [ "$current_run_id" = "$RUN_ID" ] && [ "$current_pid" = "$$" ]; then
+      rm -f "$LOCK_FILE"
+    fi
+  fi
+  if [ "$RUN_RECORD_WRITTEN" -eq 0 ]; then
+    append_run_record "$STATUS" "$EXIT_CODE" "$NEXT"
+  fi
+}
+trap cleanup EXIT
+
+metadata="{\"pid\":$$,\"startedAt\":\"$(date -Iseconds)\",\"startedAtEpoch\":$(date +%s),\"host\":\"$(json_escape "$HOST_NAME")\",\"runId\":\"$(json_escape "$RUN_ID")\"}"
+if ( set -o noclobber; printf '%s\n' "$metadata" > "$LOCK_FILE" ) 2>/dev/null; then
+  LOCK_ACQUIRED=1
+else
+  message="Worker already running. Lock file exists: $LOCK_FILE"
+  printf '%s\n' "$message"
+  printf '%s\n' "$message" >> "$LOG_FILE"
+  STATUS="skipped_locked"
+  EXIT_CODE=0
+  NEXT="another worker run is active"
+  append_run_record "$STATUS" "$EXIT_CODE" "$NEXT"
+  exit 0
+fi
+
+cd "$ROOT"
+
+set +e
+PYTHONIOENCODING=utf-8 LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 timeout "$MAX_SECONDS" claude --permission-mode bypassPermissions --print "$(< "$PROMPT_FILE")" > "$LOG_FILE" 2>&1
+EXIT_CODE=$?
+set -e
+
+if [ "$EXIT_CODE" -eq 0 ]; then
+  STATUS="success"
+  NEXT="continue with next scheduled worker run"
+elif [ "$EXIT_CODE" -eq 124 ]; then
+  STATUS="timeout"
+  NEXT="inspect worker log and rerun when safe"
+  printf 'Worker timed out after %s seconds.\n' "$MAX_SECONDS" >> "$LOG_FILE"
+else
+  STATUS="failed"
+  NEXT="inspect worker log and failure state before rerun"
+fi
+
+exit "$EXIT_CODE"

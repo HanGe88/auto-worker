@@ -1,0 +1,149 @@
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+$env:PYTHONIOENCODING = "utf-8"
+$env:LANG = "zh_CN.UTF-8"
+$env:LC_ALL = "zh_CN.UTF-8"
+
+$Root = "{{ROOT}}"
+$WorkerDir = "$Root\.claude\auto-worker\{{WORKER_NAME}}"
+$LockFile = "$WorkerDir\lock"
+$PromptFile = "$WorkerDir\worker-prompt.md"
+$LogDir = "$WorkerDir\logs"
+$RunsFile = "$WorkerDir\RUNS.jsonl"
+$MaxMinutes = {{MAX_MINUTES}}
+
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+$Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$RunId = "$Timestamp-$PID"
+$LogFile = "$LogDir\$Timestamp.log"
+$Status = "failed"
+$ExitCode = 1
+$Next = "worker wrapper failed before claude completed"
+$LockAcquired = $false
+$RunRecordWritten = $false
+$ExitCodeFile = "$WorkerDir\.exitcode-$RunId.tmp"
+
+function Write-RunRecord {
+    param(
+        [string]$RecordStatus,
+        [int]$RecordExitCode,
+        [string]$RecordNext
+    )
+
+    $Record = [ordered]@{
+        runId = $RunId
+        status = $RecordStatus
+        task = "{{WORKER_NAME}}-wrapper"
+        changedFiles = @()
+        verification = [ordered]@{
+            log = $LogFile
+            exitCode = $RecordExitCode
+        }
+        next = $RecordNext
+    }
+
+    $Line = $Record | ConvertTo-Json -Compress -Depth 5
+    Add-Content -Path $RunsFile -Value $Line -Encoding utf8
+    $script:RunRecordWritten = $true
+}
+
+function Acquire-Lock {
+    $Metadata = [ordered]@{
+        pid = $PID
+        startedAt = (Get-Date).ToString("o")
+        startedAtEpoch = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+        host = $env:COMPUTERNAME
+        runId = $RunId
+    } | ConvertTo-Json -Compress
+
+    try {
+        $Stream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $Writer = New-Object System.IO.StreamWriter($Stream, [System.Text.UTF8Encoding]::new($false))
+            try { $Writer.WriteLine($Metadata) }
+            finally { $Writer.Dispose() }
+        }
+        finally { $Stream.Dispose() }
+        return $true
+    }
+    catch [System.IO.IOException] {
+        $Message = "Worker already running. Lock file exists: $LockFile"
+        Write-Output $Message
+        $Message | Out-File -Encoding utf8 -Append $LogFile
+        $script:Status = "skipped_locked"
+        $script:ExitCode = 0
+        $script:Next = "another worker run is active"
+        Write-RunRecord $script:Status $script:ExitCode $script:Next
+        return $false
+    }
+}
+
+function Remove-CurrentLock {
+    if (-not (Test-Path $LockFile)) { return }
+    try {
+        $LockInfo = Get-Content $LockFile -Raw -Encoding utf8 | ConvertFrom-Json
+        if ($LockInfo.runId -eq $RunId -and [int]$LockInfo.pid -eq $PID) {
+            Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        Write-Output "Unable to parse lock during cleanup: $LockFile"
+    }
+}
+
+try {
+    $LockAcquired = Acquire-Lock
+    if (-not $LockAcquired) { exit 0 }
+
+    Set-Location $Root
+    $Prompt = Get-Content $PromptFile -Raw -Encoding utf8
+
+    $Job = Start-Job -ScriptBlock {
+        param($RootPath, $PromptText, $ExitCodePath)
+        $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $env:PYTHONIOENCODING = "utf-8"
+        $env:LANG = "zh_CN.UTF-8"
+        $env:LC_ALL = "zh_CN.UTF-8"
+        Set-Location $RootPath
+        claude --permission-mode bypassPermissions --print $PromptText
+        $Code = $LASTEXITCODE
+        Set-Content -Path $ExitCodePath -Value $Code -Encoding utf8
+        exit $Code
+    } -ArgumentList $Root, $Prompt, $ExitCodeFile
+
+    $Completed = Wait-Job $Job -Timeout ($MaxMinutes * 60)
+    if ($null -eq $Completed) {
+        Stop-Job $Job -ErrorAction SilentlyContinue
+        Receive-Job $Job -ErrorAction SilentlyContinue | Out-File -Encoding utf8 -Append $LogFile
+        $Status = "timeout"
+        $ExitCode = 124
+        $Next = "inspect worker log and rerun when safe"
+        "Worker timed out after $MaxMinutes minutes." | Out-File -Encoding utf8 -Append $LogFile
+    }
+    else {
+        Receive-Job $Job -ErrorAction SilentlyContinue | Out-File -Encoding utf8 $LogFile
+        if (Test-Path $ExitCodeFile) { $ExitCode = [int](Get-Content $ExitCodeFile -Raw -Encoding utf8) }
+        else { $ExitCode = 1 }
+
+        if ($ExitCode -eq 0) {
+            $Status = "success"
+            $Next = "continue with next scheduled worker run"
+        }
+        else {
+            $Status = "failed"
+            $Next = "inspect worker log and failure state before rerun"
+        }
+    }
+}
+finally {
+    Remove-Job $Job -Force -ErrorAction SilentlyContinue
+    Remove-Item $ExitCodeFile -Force -ErrorAction SilentlyContinue
+    if ($LockAcquired) { Remove-CurrentLock }
+    if (-not $RunRecordWritten) { Write-RunRecord $Status $ExitCode $Next }
+}
+
+exit $ExitCode

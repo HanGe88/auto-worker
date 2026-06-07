@@ -1,0 +1,82 @@
+[
+  {
+    "query": "帮我创建一个自动 worker，让 Claude Code 每 30 分钟自动整理一次 docs 目录里的产品文档，每轮只改一个文件，先不要启动定时任务。",
+    "should_trigger": true
+  },
+  {
+    "query": "我想把这个长期写书项目做成可恢复的自动化，每次新开 Claude 进程读状态文件继续写。",
+    "should_trigger": true
+  },
+  {
+    "query": "看看 .claude/auto-worker/book 现在跑到哪了，最近有没有失败，下一步做什么。",
+    "should_trigger": true
+  },
+  {
+    "query": "把 book worker 的计划任务改成每 15 分钟一次，并确认下一次运行时间。",
+    "should_trigger": true
+  },
+  {
+    "query": "先暂停这个自动工人，不要删除任何已经生成的文件和日志。",
+    "should_trigger": true
+  },
+  {
+    "query": "恢复 notes-worker，让它继续按之前的频率自动跑。",
+    "should_trigger": true
+  },
+  {
+    "query": "帮我解释一下 TASKS.md、STATE.md、HANDOFF.md、RUNS.jsonl 都是什么意思，以及这个自动化为什么能接力运行。",
+    "should_trigger": true
+  },
+  {
+    "query": "给这个项目加一个外部调度器，每轮启动 claude --print，做一个小任务后写回状态。",
+    "should_trigger": true
+  },
+  {
+    "query": "创建一个 worker，每 5 分钟自动登录交易网站并买卖股票。",
+    "should_trigger": true
+  },
+  {
+    "query": "读一下 README.md，给我总结三句话。",
+    "should_trigger": false
+  },
+  {
+    "query": "帮我写一个 Python 函数，把 JSONL 转成 CSV。",
+    "should_trigger": false
+  },
+  {
+    "query": "这个 PowerShell 脚本中文乱码，帮我修复编码。",
+    "should_trigger": false
+  },
+  {
+    "query": "用 cron 每天备份数据库到远程服务器。",
+    "should_trigger": false
+  },
+  {
+    "query": "帮我写一篇关于自律的短视频脚本，不需要自动化。",
+    "should_trigger": false
+  },
+  {
+    "query": "检查一下 book/manuscript/00-preface.md 有没有错别字。",
+    "should_trigger": false
+  },
+  {
+    "query": "帮我设计一个任务队列数据结构，要求支持优先级和重试。",
+    "should_trigger": false
+  },
+  {
+    "query": "我想做一个 GitHub Action，每次 push 后跑测试。",
+    "should_trigger": false
+  },
+  {
+    "query": "把这个项目部署到 Vercel。",
+    "should_trigger": false
+  },
+  {
+    "query": "帮我分析 RUNS.jsonl 里最近 20 条记录的成功率。",
+    "should_trigger": true
+  },
+  {
+    "query": "创建一个长期复盘 worker，每天晚上自动读取 journal 目录，生成一份本地总结，不能联网也不能发布。",
+    "should_trigger": true
+  }
+]
